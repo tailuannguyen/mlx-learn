@@ -1,0 +1,9 @@
+[project]
+name = "mlx-learn"
+version = "0.1.0"
+description = "Controlled local inference experiments on Apple Silicon"
+requires-python = ">=3.13,<3.14"
+dependencies = ["mlx==0.32.3", "mlx-lm==0.31.3"]
+
+[tool.uv]
+package = false
