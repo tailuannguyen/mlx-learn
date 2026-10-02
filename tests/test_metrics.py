@@ -22,6 +22,17 @@ class MetricsTests(unittest.TestCase):
         self.assertEqual(result['ttft_s']['n'], 2)
         self.assertIsNone(result['decode_tokens_per_s']['median'])
 
+    def test_cache_memory_and_management_costs_are_summarized_separately(self):
+        rows = [dict(case='persistent-prefix', cache_after_bytes=128,
+                     cache_retained_bytes=128, cache_prepare_s=0.02, cache_commit_s=0.01),
+                dict(case='persistent-prefix', cache_after_bytes=256,
+                     cache_retained_bytes=256, cache_prepare_s=0.04, cache_commit_s=0.03)]
+        summary = summarize(rows)['persistent-prefix']
+        self.assertEqual(summary['cache_after_bytes']['median'], 192)
+        self.assertEqual(summary['cache_prepare_s']['median'], 0.03)
+        self.assertEqual(summary['cache_commit_s']['median'], 0.02)
+        self.assertIsNone(summary['ttft_s']['median'])
+
 
 if __name__ == '__main__':
     unittest.main()

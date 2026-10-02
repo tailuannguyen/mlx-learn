@@ -8,10 +8,11 @@ Longer-term possibilities include llama.cpp with Metal and local or remote vLLM 
 
 ## Current repository
 
-- `experiments/run.py`: sequential greedy baseline, primed-prefix, and speculative-decoding trials; optional streamed text; structured JSON results.
+- `experiments/run.py`: default sequential greedy baseline, primed-prefix, and speculative-decoding trials; opt-in persistent-prefix and KV-quantization campaigns; optional streamed text; schema-v2 JSON results.
+- `experiments/cache.py`: backend-independent single-entry cache lifecycle policy, with exact token matching, rollback, identity invalidation, and commit of known processed positions.
 - `experiments/metrics.py`: token-prefix matching and aggregate metrics without MLX dependencies.
-- `tests/test_metrics.py`: fast measurement tests.
-- `tests/test_inference.py`: opt-in real Metal tests for native-generation parity, cached/speculative outputs, EOS accounting, and one-token runs.
+- `tests/test_metrics.py` and `tests/test_cache.py`: fast measurement and cache-lifecycle tests; test storage does not prove GPU correctness.
+- `tests/test_inference.py`: opt-in real Metal tests for native-generation parity, cached/speculative outputs, EOS accounting, one-token runs, persistent conversation/branch lifecycle, and quantized parity/cache memory.
 - `pyproject.toml` and `uv.lock`: Python 3.13, MLX 0.32.3, MLX-LM 0.31.3, and locked transitive dependencies.
 - `README.md`: setup, exact metric definitions, limitations, initial observations, and phased implementation plan. Read it before changing benchmark behavior.
 - `results/`: ignored local artifacts. The default `results/latest.json` is overwritten; choose a distinct output path to retain a run.
@@ -20,6 +21,8 @@ The supported pair is Qwen2.5-1.5B-Instruct-4bit as target and Qwen2.5-0.5B-Inst
 
 The initial nine measured trials on an M1 Pro with 16 GB RAM produced matching outputs. Prefix reuse reduced first-token latency; speculation was slower for that workload. These are local observations, not universal performance claims. Six tests, including the Metal tests, passed when the prototype was created; rerun relevant checks after changes.
 
+The persistent-prefix and KV-quantization modes were implemented using the exact MLX-LM 0.31.3 distribution source. They have not been validated with real Metal inference yet. Do not treat fast policy tests or these initial observations as validation of the new modes.
+
 ## Development and verification
 
 ```sh
@@ -27,6 +30,8 @@ uv sync --frozen
 uv run --frozen python -m unittest discover -s tests -v
 HF_HUB_OFFLINE=1 MLX_INTEGRATION=1 uv run --frozen python -m unittest discover -s tests -v
 uv run --frozen python -m experiments.run --output results/my-experiment.json
+uv run --frozen python -m experiments.run --experiment persistent-prefix --output results/persistent.json
+uv run --frozen python -m experiments.run --experiment kv-quantization --document-repeats 128 --output results/kv.json
 ```
 
 Integration tests require Metal access and previously downloaded models. The runner downloads roughly 1.3 GB on first use. Once downloaded, `HF_HUB_OFFLINE=1` permits offline runs. Sandboxed environments may deny Metal access even on a supported Mac; distinguish environment failures from inference failures and request execution permission when required. Never claim GPU validation from mocked or skipped tests.
@@ -38,7 +43,8 @@ Keep changes small and preserve the working experiment before expanding features
 - Compare off versus on within one engine first. Run cases sequentially on the GPU, exclude warmups, explicitly establish cache state, repeat trials, and retain per-run values and variability.
 - Synchronize/evaluate GPU work at completed timing boundaries. Document precisely what each timer includes; do not silently change metric meanings.
 - Current bulk prefill stops before the final prompt token. TTFT includes remaining first-token work and can include prefetch or a speculative block. Decode throughput counts sampled tokens after the first, including EOS; it is unavailable for a one-token run.
-- Current prefix trials precompute a shared token prefix outside request timing and record priming separately. They do not implement a persistent conversation cache. Distinguish reuse across requests from ordinary generation KV state.
+- Standard prefix trials precompute a shared token prefix outside request timing and record priming separately. The separate persistent-prefix mode retains known processed prompt/output tokens across a fixed request sequence, starts cold per campaign, and clears state between cases/repeats. It has no disk persistence or worker. Distinguish these modes from ordinary generation KV state.
+- Cache preparation and persistent commit are measured separately outside TTFT/total. Summarize multi-request campaigns per request index; do not combine cold and reused requests with different inputs. Quantized cases use fresh 8/4-bit target caches from the first prompt step, group size 64, and unchanged 4-bit model weights. Output agreement is not task-quality evaluation; keep that unavailable score null.
 - Both models remain resident in all current cases. MLX peak active allocation is not process RSS or total system memory, and these trials do not measure the extra residency cost of loading a draft model.
 - Accepted draft output tokens are available through `from_draft`; total proposals and proposal acceptance rate are not exposed by the current public API. Keep unavailable metrics null. Do not label accepted/output-token share as proposal acceptance rate.
 - Record exact model revisions, quantization, tokenizer/chat template, token counts, sampling configuration, cache settings, package versions, hardware, output lengths, and early stopping. Preserve output comparisons and explain mismatches.
@@ -51,6 +57,6 @@ Follow the phased plan in `README.md`: strengthen experiment coverage and cross-
 
 The future backend boundary should cover capability checks, load/unload, streaming, cancellation, cache management, supported settings, progress, structured errors, and observed metrics. Keep inference off the UI thread and communicate text/small events rather than tensors. Preserve conversations as messages; caches are backend-specific and should not be assumed transferable.
 
-KV-cache quantization and attention selection are later experiments. Verify support against the pinned backend before exposing controls. In particular, do not assume `force_fused=False` disables fused attention or that a selector alone changes model execution. Reference attention must preserve all model-specific semantics.
+KV-cache quantization is available as an isolated CLI experiment for the pinned Qwen pair, pending real-model validation. Do not combine it with persistent or rotating caches without dedicated checks. Attention selection is a later experiment. Verify support against the pinned backend before exposing controls. In particular, do not assume `force_fused=False` disables fused attention or that a selector alone changes model execution. Reference attention must preserve all model-specific semantics.
 
 CUDA-specific kernels such as DeepGEMM and CUTLASS/CuTe are not Apple GPU toggles. Do not add unsupported controls or broaden into every engine/model prematurely. Verify current competitor capabilities before making differentiation claims.
